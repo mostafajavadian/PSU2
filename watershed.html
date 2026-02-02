@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spring Creek Restoration Manager v4.5</title>
+    
+    <!-- External Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Leaflet Maps -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        :root {
+            --primary-blue: #0ea5e9;
+            --primary-dark: #0284c7;
+            --success: #22c55e;
+            --danger: #ef4444;
+            --warning: #eab308;
+            --slate-900: #0f172a;
+            --slate-800: #1e293b;
+            --slate-100: #f1f5f9;
+            --brown-earth: #854d0e;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+
+        body {
+            height: 100vh;
+            display: flex;
+            overflow: hidden;
+            background-color: var(--slate-900);
+            color: #334155;
+        }
+
+        /* --- MAP CONTAINER (Left 55%) --- */
+        #map-container {
+            width: 55%;
+            height: 100%;
+            position: relative;
+            background: #2d3748;
+            overflow: hidden;
+        }
+
+        /* The Leaflet Map Object */
+        #map-base {
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        /* GIS Location Context Overlay */
+        #gis-context {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 500;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(4px);
+            padding: 10px 15px;
+            border-radius: 6px;
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            text-align: right;
+            pointer-events: none;
+        }
+
+        .location-name { font-weight: 700; font-size: 1rem; letter-spacing: 0.5px; }
+        .location-sub { font-size: 0.75rem; color: #cbd5e1; margin-top: 2px; }
+        .coords { font-family: monospace; font-size: 0.7rem; color: var(--primary-blue); margin-top: 4px; }
+
+        /* Custom Pin Styling */
+        .custom-pin-icon {
+            background: transparent;
+            border: none;
+        }
+
+        .pin-marker {
+            width: 44px; height: 44px;
+            background: rgba(239, 68, 68, 0.95);
+            border: 3px solid white;
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            color: white;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+            font-size: 1.1rem;
+            transition: transform 0.2s;
+        }
+        
+        .custom-pin-icon:hover .pin-marker {
+            transform: scale(1.2);
+            background: #dc2626;
+        }
+
+        .custom-pin-icon.active .pin-marker {
+            background: var(--primary-blue);
+            box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.4);
+        }
+
+        .custom-pin-icon.restored .pin-marker {
+            background: var(--success);
+            border-color: #dcfce7;
+        }
+
+        /* Leaflet Tooltip (Label) Styling */
+        .map-pin-label {
+            background-color: rgba(255, 255, 255, 0.95);
+            border: 1px solid #cbd5e1;
+            color: #0f172a;
+            font-weight: 700;
+            font-size: 0.8rem;
+            padding: 4px 8px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            font-family: 'Segoe UI', sans-serif;
+            margin-top: 10px; /* Push label down from pin */
+        }
+        /* Hide Leaflet's default tooltip arrow for cleaner look */
+        .leaflet-tooltip-bottom:before {
+            display: none;
+        }
+
+        /* --- CONTROLS CONTAINER (Right 45%) --- */
+        #sidebar {
+            width: 45%;
+            height: 100%;
+            background: #fff;
+            display: flex;
+            flex-direction: column;
+            border-left: 1px solid #e2e8f0;
+            z-index: 1000;
+        }
+
+        #sidebar-header {
+            padding: 1.5rem;
+            background: var(--slate-800);
+            color: white;
+            border-bottom: 4px solid var(--primary-blue);
+        }
+
+        #grant-tracker {
+            background: #0f172a;
+            padding: 10px 1.5rem;
+            color: #94a3b8;
+            font-size: 0.9rem;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .money { color: #4ade80; font-family: monospace; font-size: 1.1rem; font-weight: bold; }
+
+        #sidebar-content {
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        /* Inspector Panel (Dynamic) */
+        .inspector-card {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 1rem;
+            animation: slideIn 0.3s ease;
+        }
+        
+        .empty-state {
+            text-align: center;
+            color: #94a3b8;
+            padding: 2rem 0;
+            border: 2px dashed #e2e8f0;
+            border-radius: 8px;
+        }
+
+        .site-title { font-size: 1.1rem; font-weight: 700; margin-bottom: 0.5rem; color: var(--slate-800); }
+        .site-stat { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 0.9rem; }
+        .stat-val { font-weight: 600; }
+        .val-bad { color: var(--danger); }
+        .val-good { color: var(--success); }
+
+        .solution-list { margin-top: 1rem; display: flex; flex-direction: column; gap: 8px; }
+        
+        .solution-btn {
+            background: white;
+            border: 1px solid #cbd5e1;
+            padding: 10px;
+            border-radius: 6px;
+            text-align: left;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .solution-btn:hover { border-color: var(--primary-blue); background: #f0f9ff; }
+        .solution-btn:disabled { opacity: 0.5; cursor: not-allowed; background: #f1f5f9; }
+        
+        .solution-btn.installed {
+            background: #dcfce7;
+            border-color: #86efac;
+            cursor: default;
+        }
+
+        .sol-name { font-weight: 600; font-size: 0.9rem; display: block; }
+        .sol-desc { font-size: 0.75rem; color: #64748b; }
+        .sol-cost { font-size: 0.8rem; font-weight: 700; color: #475569; background: #e2e8f0; padding: 2px 6px; border-radius: 4px;}
+
+        /* Charts area */
+        .chart-wrapper {
+            height: 220px;
+            margin-top: auto;
+            position: relative;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+    </style>
+</head>
+<body>
+
+    <!-- LEFT: MAP -->
+    <div id="map-container">
+        
+        <!-- Map Element -->
+        <div id="map-base"></div>
+
+        <!-- GIS Location Overlay -->
+        <div id="gis-context">
+            <div class="location-name">Spring Creek Watershed</div>
+            <div class="location-sub">Houserville, Centre County, PA</div>
+            <div class="coords">40.834°N, 77.825°W</div>
+        </div>
+
+    </div>
+
+    <!-- RIGHT: CONTROLS -->
+    <div id="sidebar">
+        <div id="sidebar-header">
+            <h2>Spring Creek Manager</h2>
+            <div style="font-size:0.8rem; opacity:0.8">Interactive Restoration Plan</div>
+        </div>
+        
+        <div id="grant-tracker">
+            <span>Grant Budget</span>
+            <span class="money" id="budget-display">$160,000</span>
+        </div>
+
+        <div id="sidebar-content">
+            
+            <!-- Dynamic Inspector Panel -->
+            <div id="inspector-panel">
+                <div class="empty-state">
+                    <i class="fa-solid fa-location-dot" style="font-size: 2rem; margin-bottom: 1rem; color:#cbd5e1;"></i>
+                    <p>Select a marked site on the map<br>to inspect.</p>
+                </div>
+            </div>
+
+            <!-- Global Metrics -->
+            <div style="margin-top:auto; padding-top:1rem; border-top:1px solid #e2e8f0;">
+                <h4 style="font-size:0.8rem; text-transform:uppercase; color:#64748b; margin-bottom:4px;">Downstream Gauge (Watershed Average)</h4>
+                <div class="chart-wrapper">
+                    <canvas id="mainChart"></canvas>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        // --- DATA MODEL ---
+        const state = {
+            budget: 160000,
+            selectedSite: null,
+            map: null,
+            markers: {},
+            sites: {
+                ag: {
+                    id: 'ag',
+                    name: "Houserville Ag Lands",
+                    type: "Agricultural",
+                    issue: "Sediment runoff & lack of shade.",
+                    lat: 40.8365, 
+                    lng: -77.8210, 
+                    data: { temp: "21.0°C", tss: "180 NTU" },
+                    applied: [], // List of applied solution IDs
+                    options: [
+                        { id: 'buffer', name: 'Riparian Buffer', cost: 30000, desc: 'Plant trees along bank', tempDrop: 1.5, tssDrop: 80 },
+                        { id: 'fencing', name: 'Cattle Fencing', cost: 15000, desc: 'Exclude livestock', tempDrop: 0.5, tssDrop: 50 }
+                    ]
+                },
+                urban: {
+                    id: 'urban',
+                    name: "Spring Creek Outfall",
+                    type: "Urban Stormwater",
+                    issue: "Thermal surge from pavement.",
+                    lat: 40.8325, 
+                    lng: -77.8285, 
+                    data: { temp: "28.0°C", tss: "30 NTU" },
+                    applied: [],
+                    options: [
+                        { id: 'wetland', name: 'Constructed Wetland', cost: 65000, desc: 'Retention & cooling', tempDrop: 3.0, tssDrop: 25 },
+                        { id: 'pervious', name: 'Pervious Pavement', cost: 45000, desc: 'Infiltration upgrade', tempDrop: 1.5, tssDrop: 10 }
+                    ]
+                }
+            },
+            history: {
+                labels: ['Baseline'],
+                temp: [24.5],
+                tss: [105] 
+            }
+        };
+
+        // --- MAP INITIALIZATION (LEAFLET) ---
+        function initMap() {
+            state.map = L.map('map-base', {
+                center: [40.834, -77.825],
+                zoom: 16,
+                zoomControl: false,
+                scrollWheelZoom: false,
+                dragging: false,
+                doubleClickZoom: false
+            });
+
+            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'Tiles &copy; Esri'
+            }).addTo(state.map);
+
+            addMarkers();
+            initChart(); 
+        }
+
+        function addMarkers() {
+            for (const [key, site] of Object.entries(state.sites)) {
+                const customIcon = L.divIcon({
+                    className: 'custom-pin-icon',
+                    html: `<div class="pin-marker" id="marker-${key}"><i class="fa-solid ${key === 'ag' ? 'fa-tractor' : 'fa-city'}"></i></div>`,
+                    iconSize: [44, 44],
+                    iconAnchor: [22, 22] 
+                });
+
+                const marker = L.marker([site.lat, site.lng], { icon: customIcon }).addTo(state.map);
+                
+                marker.bindTooltip(site.name, {
+                    permanent: true,
+                    direction: 'bottom',
+                    className: 'map-pin-label'
+                }).openTooltip();
+
+                marker.on('click', () => {
+                    inspectSite(key);
+                });
+
+                state.markers[key] = marker;
+            }
+        }
+
+        // --- UI LOGIC ---
+
+        function inspectSite(siteId) {
+            state.selectedSite = siteId;
+            const site = state.sites[siteId];
+
+            document.querySelectorAll('.custom-pin-icon').forEach(el => el.classList.remove('active'));
+            const markerEl = document.querySelector(`#marker-${siteId}`).parentElement;
+            if(markerEl) markerEl.classList.add('active');
+
+            const panel = document.getElementById('inspector-panel');
+            
+            // Build the list of options
+            let optionsHTML = site.options.map(opt => {
+                const isInstalled = site.applied.includes(opt.id);
+                
+                if (isInstalled) {
+                    return `
+                    <div class="solution-btn installed">
+                        <div>
+                            <span class="sol-name"><i class="fa-solid fa-check"></i> ${opt.name}</span>
+                            <span class="sol-desc" style="color:#15803d">Installed</span>
+                        </div>
+                        <div style="text-align:right">
+                             <div class="sol-cost" style="background:#bbf7d0; color:#14532d">$${opt.cost.toLocaleString()}</div>
+                        </div>
+                    </div>`;
+                } else {
+                    return `
+                    <button class="solution-btn" onclick="applySolution('${siteId}', '${opt.id}')" ${state.budget < opt.cost ? 'disabled' : ''}>
+                        <div>
+                            <span class="sol-name">${opt.name}</span>
+                            <span class="sol-desc">${opt.desc}</span>
+                        </div>
+                        <div style="text-align:right">
+                            <div class="sol-cost">$${opt.cost.toLocaleString()}</div>
+                            <div style="font-size:0.7rem; color:#64748b; margin-top:4px;">
+                                <span style="color:var(--primary-blue)">↓ ${opt.tempDrop}°C</span> <span style="color:#854d0e; margin-left:6px;">↓ ${opt.tssDrop} NTU</span>
+                            </div>
+                        </div>
+                    </button>`;
+                }
+            }).join('');
+
+            panel.innerHTML = `
+                <div class="inspector-card">
+                    <div class="site-title">${site.name}</div>
+                    <div style="font-size:0.85rem; color:#64748b; margin-bottom:1rem; font-style:italic;">
+                        "${site.issue}"
+                    </div>
+                    
+                    <div style="background:white; padding:10px; border-radius:6px; margin-bottom:1rem; border:1px solid #e2e8f0;">
+                        <div style="margin-bottom:8px; font-size:0.75rem; color:#94a3b8; text-transform:uppercase; font-weight:700;">Local Site Data</div>
+                        <div class="site-stat">
+                            <span>Temperature</span>
+                            <span class="stat-val ${parseFloat(site.data.temp) > 24 ? 'val-bad' : 'val-good'}">${site.data.temp}</span>
+                        </div>
+                        <div class="site-stat">
+                            <span>Turbidity (TSS)</span>
+                            <span class="stat-val ${parseInt(site.data.tss) > 100 ? 'val-bad' : 'val-good'}">${site.data.tss}</span>
+                        </div>
+                    </div>
+
+                    <h5 style="font-size:0.75rem; text-transform:uppercase; color:#94a3b8; margin-bottom:8px;">Restoration Actions</h5>
+                    <div class="solution-list">
+                        ${optionsHTML}
+                    </div>
+                </div>
+            `;
+        }
+
+        function applySolution(siteId, solutionId) {
+            const site = state.sites[siteId];
+            
+            // Prevent double application check
+            if (site.applied.includes(solutionId)) return;
+
+            const solution = site.options.find(o => o.id === solutionId);
+
+            if (state.budget >= solution.cost) {
+                state.budget -= solution.cost;
+                site.applied.push(solutionId); // Track application
+
+                // Update UI Budget
+                document.getElementById('budget-display').innerText = '$' + state.budget.toLocaleString();
+                
+                // Update Marker to Green if at least one thing applied
+                const markerEl = document.querySelector(`#marker-${siteId}`).parentElement;
+                if(markerEl && site.applied.length === 1) { // Only animate first time
+                    markerEl.classList.remove('active');
+                    markerEl.classList.add('restored');
+                    document.querySelector(`#marker-${siteId}`).innerHTML = '<i class="fa-solid fa-check"></i>';
+                }
+                
+                // Update Chart Data
+                const currentTemp = state.history.temp[state.history.temp.length-1];
+                const currentTSS = state.history.tss[state.history.tss.length-1];
+                
+                const newTemp = Math.max(17, currentTemp - solution.tempDrop);
+                const newTSS = Math.max(10, currentTSS - (solution.tssDrop / 2)); 
+
+                state.history.labels.push(solution.name);
+                state.history.temp.push(newTemp);
+                state.history.tss.push(newTSS);
+                
+                updateChart();
+                inspectSite(siteId); // Re-render list to show checked item
+            }
+        }
+
+        // --- CHART CONFIG ---
+        let mainChart;
+
+        function initChart() {
+            const ctx = document.getElementById('mainChart').getContext('2d');
+            
+            // Gradient for Temp
+            const gradientTemp = ctx.createLinearGradient(0, 0, 0, 200);
+            gradientTemp.addColorStop(0, 'rgba(59, 130, 246, 0.4)');
+            gradientTemp.addColorStop(1, 'rgba(59, 130, 246, 0.0)');
+
+            // Gradient for TSS
+            const gradientTSS = ctx.createLinearGradient(0, 0, 0, 200);
+            gradientTSS.addColorStop(0, 'rgba(133, 77, 14, 0.4)');
+            gradientTSS.addColorStop(1, 'rgba(133, 77, 14, 0.0)');
+
+            mainChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: state.history.labels,
+                    datasets: [
+                        {
+                            label: 'Stream Temp (°C)',
+                            data: state.history.temp,
+                            borderColor: '#3b82f6', // Blue
+                            backgroundColor: gradientTemp,
+                            borderWidth: 3,
+                            pointBackgroundColor: '#fff',
+                            pointBorderColor: '#3b82f6',
+                            pointRadius: 5,
+                            pointHoverRadius: 7,
+                            yAxisID: 'y',
+                            fill: true,
+                            tension: 0.4
+                        },
+                        {
+                            label: 'Turbidity (NTU)',
+                            data: state.history.tss,
+                            borderColor: '#a16207', // Brown/Gold
+                            backgroundColor: gradientTSS,
+                            borderWidth: 3,
+                            borderDash: [5, 5],
+                            pointBackgroundColor: '#fff',
+                            pointBorderColor: '#a16207',
+                            pointRadius: 5,
+                            pointHoverRadius: 7,
+                            yAxisID: 'y1',
+                            fill: true,
+                            tension: 0.4
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: {
+                                usePointStyle: true,
+                                boxWidth: 10,
+                                font: { size: 14 } 
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                            titleFont: { size: 14 },
+                            bodyFont: { size: 14 },
+                            padding: 12,
+                            displayColors: true
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { display: false },
+                            ticks: { font: { size: 14 } } 
+                        },
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: { display: true, text: 'Temp (°C)', color: '#3b82f6', font: { weight: 'bold' } },
+                            min: 15,
+                            max: 28,
+                            grid: { color: '#f1f5f9' }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: { display: true, text: 'TSS (NTU)', color: '#a16207', font: { weight: 'bold' } },
+                            min: 0,
+                            max: 200,
+                            grid: { display: false }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateChart() {
+            mainChart.data.labels = state.history.labels;
+            mainChart.data.datasets[0].data = state.history.temp;
+            mainChart.data.datasets[1].data = state.history.tss;
+            mainChart.update();
+        }
+
+        // Init
+        window.onload = initMap;
+
+    </script>
+</body>
+</html>
