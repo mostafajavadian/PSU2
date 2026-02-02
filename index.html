@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rock Springs Precision Ecohydrology Dashboard</title>
+    
+    <!-- Leaflet CSS --><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Font Awesome --><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <!-- Tailwind CSS --><script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet JS --><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Chart.js --><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Turf.js --><script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
+
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; }
+        
+        /* Flex layout for Header + Map */
+        body { display: flex; flex-direction: column; }
+        
+        #map-container { position: relative; flex: 1; width: 100%; overflow: hidden; background: #0f172a; }
+        #map { height: 100%; width: 100%; z-index: 0; }
+        
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.96);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            box-shadow: 0 20px 50px -12px rgba(0, 0, 0, 0.3);
+        }
+
+        .active-strategy {
+            border: 2px solid #1e40af !important;
+            background: #eff6ff !important;
+            transform: scale(1.02);
+        }
+
+        /* SVG Filters */
+        .filter-thermal .leaflet-tile-pane { filter: url(#thermal-filter); }
+        .filter-ndvi .leaflet-tile-pane { filter: url(#ndvi-filter); }
+
+        /* Map Marker Styles */
+        .sensor-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: white;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.4);
+            border: 2px solid white;
+            transition: transform 0.2s;
+            z-index: 500;
+        }
+        .sensor-icon:hover { transform: scale(1.2); z-index: 1000 !important; }
+        
+        .strategy-label {
+            background: rgba(255, 255, 255, 0.98);
+            padding: 8px 14px;
+            border-radius: 8px;
+            font-weight: 900;
+            text-transform: uppercase;
+            font-size: 11px;
+            color: #1e293b;
+            box-shadow: 0 6px 15px rgba(0,0,0,0.3);
+            border: 2px solid #cbd5e1;
+            white-space: nowrap;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+            pointer-events: auto;
+            z-index: 1000 !important; /* Force on top */
+        }
+        .strategy-label:hover {
+            background: #1e3a8a;
+            color: white;
+            transform: translateY(-2px) scale(1.05);
+            border-color: white;
+        }
+        .strategy-label.active-label {
+            background: #1e40af;
+            color: white;
+            border-color: #1e3a8a;
+            box-shadow: 0 0 0 4px rgba(30, 64, 175, 0.3);
+        }
+
+        /* Insight Box Animations */
+        @keyframes pulse-alert {
+            0% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(225, 29, 72, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0); }
+        }
+        .status-critical {
+            background: #be123c !important;
+            animation: pulse-alert 2s infinite;
+        }
+        .status-warning {
+            background: #d97706 !important;
+        }
+        .status-good {
+            background: #1e3a8a !important;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+
+    <!-- Definitions for SVG Filters -->
+    <svg style="height: 0; width: 0; position: absolute;">
+        <defs>
+            <filter id="thermal-filter" color-interpolation-filters="sRGB">
+                <feColorMatrix type="matrix" values="0.33 0.33 0.33 0 0 
+                                                   0.33 0.33 0.33 0 0 
+                                                   0.33 0.33 0.33 0 0 
+                                                   0 0 0 1 0"/>
+                <feComponentTransfer>
+                    <feFuncR type="table" tableValues="0 0 0.4 0.9 1"/>
+                    <feFuncG type="table" tableValues="0 0.4 0.9 0.6 0"/>
+                    <feFuncB type="table" tableValues="0.9 0.7 0.2 0 0"/>
+                </feComponentTransfer>
+            </filter>
+            <filter id="ndvi-filter" color-interpolation-filters="sRGB">
+                <feColorMatrix type="matrix" values="0.33 0.33 0.33 0 0 
+                                                   0.33 0.33 0.33 0 0 
+                                                   0.33 0.33 0.33 0 0 
+                                                   0 0 0 1 0"/>
+                <feComponentTransfer>
+                    <feFuncR type="table" tableValues="0.4 0.2 0"/>
+                    <feFuncG type="table" tableValues="0.2 0.7 1"/>
+                    <feFuncB type="table" tableValues="0.1 0 0"/>
+                </feComponentTransfer>
+            </filter>
+        </defs>
+    </svg>
+
+    <!-- Main App Header -->
+    <header class="h-16 bg-[#1e3a8a] text-white flex items-center justify-between px-6 shadow-xl z-50 relative shrink-0">
+        <div class="flex items-center gap-3">
+            <div class="bg-white/10 p-2 rounded-lg">
+                <i class="fa-solid fa-earth-americas text-xl"></i>
+            </div>
+            <h1 class="text-xl font-black tracking-wide uppercase">Climate Smart Agro Ecosystem Dashboard</h1>
+        </div>
+        <div class="flex items-center gap-4 text-sm font-semibold opacity-90">
+            <div class="hidden md:flex items-center gap-2">
+                <i class="fa-solid fa-location-dot"></i>
+                <span>Rock Springs, PA</span>
+            </div>
+            <div class="h-4 w-px bg-white/30 hidden md:block"></div>
+            <div>Dr. Mostafa Javadian</div>
+        </div>
+    </header>
+
+    <!-- Map & Overlay Container -->
+    <div id="map-container">
+        <div id="map"></div>
+
+        <!-- Sidebar Overlay -->
+        <div id="sidebar" class="absolute top-6 left-6 w-[450px] glass-panel rounded-3xl p-7 z-[1000] flex flex-col gap-6 transition-all duration-500 shadow-2xl">
+            <div class="flex items-center gap-4 border-b border-slate-200 pb-5">
+                <div class="bg-blue-900 p-3 rounded-2xl text-white shadow-lg">
+                    <i class="fa-solid fa-satellite-dish text-xl"></i>
+                </div>
+                <div>
+                    <h2 class="text-lg font-black text-slate-800 tracking-tight">Rock Springs Eco Twin</h2>
+                    <p class="text-[10px] font-bold text-blue-600 uppercase tracking-widest">Natural Resources Conservation Hub</p>
+                </div>
+            </div>
+
+            <!-- Strategy Selection -->
+            <div>
+                <h3 class="text-[11px] font-black uppercase text-slate-400 mb-3 tracking-widest">Conservation Strategy</h3>
+                <div class="grid grid-cols-3 gap-3">
+                    <button onclick="selectStrategy('conventional')" id="btn-conv" class="p-3 rounded-2xl border border-slate-200 bg-white text-left hover:border-blue-300 transition group active-strategy shadow-sm">
+                        <div class="text-xs font-bold text-slate-700">Conventional</div>
+                        <div class="text-[9px] text-slate-400 leading-tight mt-1">Standard tillage</div>
+                    </button>
+                    <button onclick="selectStrategy('notill')" id="btn-notill" class="p-3 rounded-2xl border border-slate-200 bg-white text-left hover:border-blue-300 transition group shadow-sm">
+                        <div class="text-xs font-bold text-slate-700">No Till</div>
+                        <div class="text-[9px] text-slate-400 leading-tight mt-1">Residue mgmt</div>
+                    </button>
+                    <button onclick="selectStrategy('covercrop')" id="btn-cover" class="p-3 rounded-2xl border border-slate-200 bg-white text-left hover:border-blue-300 transition group shadow-sm">
+                        <div class="text-xs font-bold text-slate-700">Cover Crop</div>
+                        <div class="text-[9px] text-slate-400 leading-tight mt-1">Active veg</div>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Flash Drought Timeseries -->
+            <div class="bg-white/60 p-1 rounded-2xl border border-slate-200 shadow-inner">
+                <div class="flex justify-between items-center px-4 pt-3 pb-1">
+                    <label class="text-[10px] font-black uppercase text-rose-500 tracking-widest">Summer Flash Drought (July 2024)</label>
+                </div>
+                <div class="h-48 w-full p-2">
+                    <canvas id="droughtChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Goal 2 Insight Box -->
+            <div id="insightBox" class="p-5 rounded-2xl bg-blue-900 text-white shadow-xl relative overflow-hidden group transition-all duration-500 flex items-start gap-4">
+                <div class="bg-white/20 p-2 rounded-full shrink-0">
+                    <i id="insightIcon" class="fa-solid fa-leaf text-xl text-white"></i>
+                </div>
+                <div class="relative z-10">
+                    <h4 class="text-[10px] font-bold uppercase text-white/80 mb-1 tracking-widest">Efficacy Evaluation</h4>
+                    <p id="insightText" class="text-xs leading-relaxed font-bold text-white">Exposed soil in conventional tillage loses moisture rapidly, causing an early spike in canopy temperature.</p>
+                </div>
+                <!-- Decorative Icon -->
+                <i class="fa-solid fa-chart-line absolute -bottom-2 -right-2 text-6xl text-white opacity-10 group-hover:scale-110 transition-transform duration-500"></i>
+            </div>
+        </div>
+
+        <!-- Spectral Tool Box -->
+        <div id="spectralControls" class="absolute bottom-10 left-1/2 -translate-x-1/2 glass-panel px-6 py-4 rounded-full z-[1000] flex items-center gap-6 shadow-2xl">
+            <button onclick="setSpectralMode('rgb')" id="sbtn-rgb" class="flex items-center gap-2 px-4 py-2 rounded-full font-black text-[10px] uppercase transition-all bg-blue-600 text-white shadow-lg">
+                <i class="fa-solid fa-camera"></i> RGB
+            </button>
+            <button onclick="setSpectralMode('thermal')" id="sbtn-thermal" class="flex items-center gap-2 px-4 py-2 rounded-full font-black text-[10px] uppercase transition-all text-slate-400 hover:text-rose-600 hover:bg-rose-50">
+                <i class="fa-solid fa-temperature-high"></i> Thermal
+            </button>
+            <button onclick="setSpectralMode('ndvi')" id="sbtn-ndvi" class="flex items-center gap-2 px-4 py-2 rounded-full font-black text-[10px] uppercase transition-all text-slate-400 hover:text-emerald-600 hover:bg-emerald-50">
+                <i class="fa-solid fa-leaf"></i> NDVI
+            </button>
+            <div class="h-6 w-px bg-slate-200"></div>
+            <div class="flex items-center gap-3">
+                <div id="colorbar" class="w-32 h-2 rounded-full bg-slate-200 shadow-inner"></div>
+                <span id="cLabel" class="text-[9px] font-black text-slate-400 uppercase">Visual</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let map;
+        let currentStrategy = 'conventional';
+        let currentMode = 'rgb';
+        let plotLayer;
+        let labelsLayer = L.layerGroup();
+        let sensorLayer = L.layerGroup();
+        let networkLines = L.layerGroup();
+        let droughtChart;
+
+        // Flash Drought Data Simulation (July 1 - July 21)
+        const days = Array.from({length: 21}, (_, i) => `July ${i+1}`);
+        const datasets = {
+            conventional: {
+                temp: [26,27,28,30,32,34,36,38,39,40,41,41,42,42,41,40,39,38,37,36,35],
+                moisture: [38,35,30,25,20,15,12,10,9,8,8,7,7,7,8,9,10,12,15,18,20],
+                insight: "Conventional Tillage: CRITICAL STRESS. Rapid moisture loss led to severe plant stress by Day 7. Canopy temperatures spiked >40°C.",
+                peakTemp: 42
+            },
+            notill: {
+                temp: [25,25,26,27,28,30,31,32,33,34,35,35,34,33,32,31,30,29,28,27,26],
+                moisture: [40,38,36,34,32,30,28,26,24,22,21,20,20,21,22,24,26,28,30,32,34],
+                insight: "No Till: MODERATE STRESS. Surface residues delayed moisture depletion by 5-6 days. Peak temperatures moderated.",
+                peakTemp: 35
+            },
+            covercrop: {
+                temp: [24,24,24,25,25,26,27,28,28,29,29,28,27,26,25,24,24,23,23,23,23],
+                moisture: [42,41,40,39,38,37,36,35,34,33,32,32,33,34,36,38,40,42,43,44,45],
+                insight: "Cover Crop: OPTIMAL PERFORMANCE. Highest moisture retention observed. Canopy remained ~12°C cooler than conventional plots.",
+                peakTemp: 29
+            }
+        };
+
+        const satelliteTiles = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            maxZoom: 19,
+            attribution: 'Esri'
+        });
+
+        window.onload = function() {
+            // Initialize Map
+            map = L.map('map', { zoomControl: false }).setView([40.7128, -77.942], 18);
+            satelliteTiles.addTo(map);
+            plotLayer = L.geoJson(null, { style: getPlotStyle, onEachFeature: onEachFeature }).addTo(map);
+            networkLines.addTo(map);
+            sensorLayer.addTo(map);
+            labelsLayer.addTo(map); // Added last to be on top
+            
+            // Define 3 Uniform Rectangular Plots
+            const plotsGeoJson = {
+                "type": "FeatureCollection",
+                "features": [
+                    { "type": "Feature", "properties": { "strategy": "conventional" }, "geometry": { "type": "Polygon", "coordinates": [[ [-77.9450, 40.7135], [-77.9430, 40.7135], [-77.9430, 40.7120], [-77.9450, 40.7120], [-77.9450, 40.7135] ]] } },
+                    { "type": "Feature", "properties": { "strategy": "notill" }, "geometry": { "type": "Polygon", "coordinates": [[ [-77.9428, 40.7135], [-77.9408, 40.7135], [-77.9408, 40.7120], [-77.9428, 40.7120], [-77.9428, 40.7135] ]] } },
+                    { "type": "Feature", "properties": { "strategy": "covercrop" }, "geometry": { "type": "Polygon", "coordinates": [[ [-77.9406, 40.7135], [-77.9386, 40.7135], [-77.9386, 40.7120], [-77.9406, 40.7120], [-77.9406, 40.7135] ]] } }
+                ]
+            };
+
+            plotLayer.addData(plotsGeoJson);
+            generateRandomSensorNetwork(plotsGeoJson);
+            addStrategyLabels();
+            initChart();
+            updateDashboard();
+        };
+
+        function initChart() {
+            const ctx = document.getElementById('droughtChart').getContext('2d');
+            droughtChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: days,
+                    datasets: []
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { labels: { usePointStyle: true, font: {size: 10, weight: 'bold'} } },
+                        tooltip: { backgroundColor: 'rgba(255,255,255,0.9)', titleColor:'#0f172a', bodyColor:'#334155', borderColor: '#e2e8f0', borderWidth: 1 }
+                    },
+                    scales: {
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: { display: true, text: 'Canopy Temp (°C)', color: '#f43f5e', font: {size: 9, weight:'bold'} },
+                            grid: { display: false }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: { display: true, text: 'Moisture (%)', color: '#10b981', font: {size: 9, weight:'bold'} },
+                            grid: { color: '#f1f5f9' }
+                        },
+                        x: { grid: { display: false }, ticks: { font: {size: 9}, maxTicksLimit: 7 } }
+                    }
+                }
+            });
+        }
+
+        function onEachFeature(feature, layer) {
+            layer.on('click', function() { selectStrategy(feature.properties.strategy); });
+        }
+
+        function generateRandomSensorNetwork(plots) {
+            sensorLayer.clearLayers();
+            networkLines.clearLayers();
+
+            const camIcon = L.divIcon({ className: '', html: `<div class="sensor-icon text-rose-600 bg-white" style="width:32px; height:32px; font-size:14px;"><i class="fa-solid fa-video"></i></div>`, iconSize: [32, 32], iconAnchor: [16, 16] });
+            const probeIcon = L.divIcon({ className: '', html: `<div class="sensor-icon text-blue-600 bg-white" style="width:24px; height:24px; font-size:12px;"><i class="fa-solid fa-droplet"></i></div>`, iconSize: [24, 24], iconAnchor: [12, 12] });
+            const rand = (min, max) => Math.random() * (max - min) + min;
+
+            plots.features.forEach(plot => {
+                const coords = plot.geometry.coordinates[0];
+                const lats = coords.map(c => c[1]);
+                const lngs = coords.map(c => c[0]);
+                const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+                const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+
+                // Add 2 Random Thermal Cameras
+                const sensors = [];
+                for(let i=0; i<2; i++) {
+                    const loc = L.latLng(rand(minLat + 0.0003, maxLat - 0.0003), rand(minLng + 0.0003, maxLng - 0.0003));
+                    sensors.push(loc);
+                    L.marker(loc, {icon: camIcon}).addTo(sensorLayer);
+                }
+
+                // Add 4 Random Soil Probes
+                for(let i=0; i<4; i++) {
+                    const loc = L.latLng(rand(minLat + 0.0002, maxLat - 0.0002), rand(minLng + 0.0002, maxLng - 0.0002));
+                    sensors.push(loc);
+                    L.marker(loc, {icon: probeIcon}).addTo(sensorLayer);
+                }
+
+                // Create Mesh Network (Connect all sensors to each other if close, or at least a few)
+                for (let i = 0; i < sensors.length; i++) {
+                    for (let j = i + 1; j < sensors.length; j++) {
+                        L.polyline([sensors[i], sensors[j]], {color: '#94a3b8', weight: 1.5, opacity: 0.8}).addTo(networkLines);
+                    }
+                }
+            });
+        }
+
+        function addStrategyLabels() {
+            // High zIndexOffset ensures they are on top
+            const labels = [
+                { loc: [40.71275, -77.9440], text: "Conventional", id: "conventional" },
+                { loc: [40.71275, -77.9418], text: "No Till", id: "notill" },
+                { loc: [40.71275, -77.9396], text: "Cover Crop", id: "covercrop" }
+            ];
+            labels.forEach(l => {
+                const icon = L.divIcon({ className: '', html: `<div id="lbl-${l.id}" class="strategy-label ${l.id === 'conventional' ? 'active-label' : ''}">${l.text}</div>`, iconSize: [110, 28], iconAnchor: [55, 14] });
+                L.marker(l.loc, {icon: icon, zIndexOffset: 10000}).addTo(labelsLayer).on('click', () => selectStrategy(l.id));
+            });
+        }
+
+        function getPlotStyle(feature) {
+            let style = { weight: 1, color: 'white', fillOpacity: 0.6 };
+            const strategyData = datasets[feature.properties.strategy];
+            
+            // Visualize Day 14 (Peak Stress) on the map
+            const peakDayIndex = 14; 
+            const temp = strategyData.temp[peakDayIndex];
+            const moisture = strategyData.moisture[peakDayIndex];
+
+            if (currentMode === 'thermal') {
+                const tNorm = Math.min(1, Math.max(0, (temp - 22) / 20)); 
+                style.fillColor = tNorm < 0.5 ? `rgb(0, ${Math.floor(255*tNorm*2)}, ${Math.floor(255*(1-tNorm*2))})` : `rgb(255, ${Math.floor(255*(1-(tNorm-0.5)*2))}, 0)`;
+                style.fillOpacity = 0.6; style.color = 'transparent';
+            } else if (currentMode === 'ndvi') {
+                const mNorm = moisture / 50; 
+                style.fillColor = mNorm > 0.5 ? `rgb(${Math.floor(255*(1-mNorm)*2)}, 150, 50)` : `rgb(180, ${Math.floor(255*mNorm*2)}, 50)`;
+                style.fillOpacity = 0.6; style.color = 'transparent';
+            } else {
+                style.fillColor = feature.properties.strategy === 'covercrop' ? '#10b981' : feature.properties.strategy === 'notill' ? '#334155' : '#64748b';
+                style.fillOpacity = 0.1; style.color = '#fff';
+            }
+            
+            if (feature.properties.strategy === currentStrategy) {
+                style.weight = 3; style.color = '#3b82f6'; style.fillOpacity += 0.15;
+            }
+            return style;
+        }
+
+        function selectStrategy(id) {
+            currentStrategy = id;
+            ['conv', 'notill', 'cover'].forEach(k => document.getElementById('btn-'+k).classList.remove('active-strategy'));
+            const mapId = {conventional: 'conv', notill: 'notill', covercrop: 'cover'};
+            document.getElementById('btn-'+mapId[id]).classList.add('active-strategy');
+
+            document.querySelectorAll('.strategy-label').forEach(el => el.classList.remove('active-label'));
+            const labelEl = document.getElementById('lbl-' + id);
+            if(labelEl) labelEl.classList.add('active-label');
+            
+            plotLayer.setStyle(getPlotStyle);
+            updateDashboard();
+        }
+
+        function updateDashboard() {
+            const data = datasets[currentStrategy];
+            const box = document.getElementById('insightBox');
+            const icon = document.getElementById('insightIcon');
+            
+            // Update Text
+            document.getElementById('insightText').innerText = data.insight;
+
+            // Update Color & Icon based on peak stress
+            box.classList.remove('status-critical', 'status-warning', 'status-good');
+            icon.className = "text-xl text-white"; // Reset icon base classes
+            
+            if (data.peakTemp > 38) {
+                box.classList.add('status-critical');
+                icon.classList.add('fa-solid', 'fa-triangle-exclamation');
+            } else if (data.peakTemp > 32) {
+                box.classList.add('status-warning');
+                icon.classList.add('fa-solid', 'fa-circle-exclamation');
+            } else {
+                box.classList.add('status-good');
+                icon.classList.add('fa-solid', 'fa-circle-check');
+            }
+
+            // Update Chart
+            droughtChart.data.datasets = [
+                {
+                    label: 'Canopy Temp (°C)',
+                    data: data.temp,
+                    borderColor: '#f43f5e',
+                    backgroundColor: 'rgba(244, 63, 94, 0.1)',
+                    yAxisID: 'y',
+                    borderWidth: 2,
+                    tension: 0.4,
+                    pointRadius: 0
+                },
+                {
+                    label: 'Soil Moisture (%)',
+                    data: data.moisture,
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    yAxisID: 'y1',
+                    borderWidth: 2,
+                    borderDash: [5, 5],
+                    tension: 0.4,
+                    pointRadius: 0
+                }
+            ];
+            droughtChart.update();
+        }
+
+        function setSpectralMode(mode) {
+            currentMode = mode;
+            const pane = document.querySelector('.leaflet-map-pane');
+            pane.classList.remove('filter-thermal', 'filter-ndvi');
+            
+            ['rgb', 'thermal', 'ndvi'].forEach(m => {
+                const b = document.getElementById('sbtn-'+m);
+                b.className = "flex items-center gap-2 px-4 py-2 rounded-full font-black text-[10px] uppercase transition-all text-slate-400";
+            });
+
+            const activeBtn = document.getElementById('sbtn-'+mode);
+            const bar = document.getElementById('colorbar');
+            const label = document.getElementById('cLabel');
+
+            if (mode === 'thermal') {
+                pane.classList.add('filter-thermal');
+                activeBtn.classList.add('bg-rose-600', 'text-white');
+                bar.style.background = 'linear-gradient(to right, blue, green, yellow, red)';
+                label.innerText = "Temperature";
+            } else if (mode === 'ndvi') {
+                pane.classList.add('filter-ndvi');
+                activeBtn.classList.add('bg-emerald-600', 'text-white');
+                bar.style.background = 'linear-gradient(to right, rgb(180, 150, 50), rgb(0, 150, 50))';
+                label.innerText = "Biomass Health";
+            } else {
+                activeBtn.classList.add('bg-blue-600', 'text-white');
+                bar.style.background = 'linear-gradient(to right, #ccc, #fff)';
+                label.innerText = "Visual";
+            }
+
+            if (plotLayer) plotLayer.setStyle(getPlotStyle);
+        }
+    </script>
+</body>
+</html>
